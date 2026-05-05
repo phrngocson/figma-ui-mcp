@@ -68,6 +68,31 @@ const ICON_LIBRARIES = [
   { name: "lucide",       urlFn: (n) => `https://unpkg.com/lucide-static@0.577.0/icons/${n}.svg`,                                                      fillType: "stroke" },
 ];
 
+// BUG-04: suggest correct Ionicons name when user passes Material Icons naming
+const MATERIAL_TO_IONICONS = {
+  local_cafe: "cafe", local_bar: "wine", local_pizza: "pizza", local_dining: "restaurant",
+  spa: "leaf", grass: "leaf", nature: "leaf", park: "leaf", eco: "leaf",
+  notifications: "notifications", alarm: "alarm", schedule: "time", access_time: "time",
+  favorite: "heart", thumb_up: "thumbs-up", thumb_down: "thumbs-down",
+  visibility: "eye", visibility_off: "eye-off",
+  arrow_back: "arrow-back", arrow_forward: "arrow-forward", arrow_upward: "arrow-up", arrow_downward: "arrow-down",
+  chevron_left: "chevron-back", chevron_right: "chevron-forward", expand_more: "chevron-down", expand_less: "chevron-up",
+  close: "close", check: "checkmark", check_circle: "checkmark-circle", error: "close-circle",
+  add: "add", remove: "remove", edit: "create", delete: "trash",
+  shopping_cart: "cart", shopping_bag: "bag",
+  settings: "settings", account_circle: "person-circle", person: "person", group: "people",
+  search: "search", filter_list: "filter", sort: "swap-vertical",
+  menu: "menu", more_horiz: "ellipsis-horizontal", more_vert: "ellipsis-vertical",
+  home: "home", star: "star", bookmark: "bookmark", lock: "lock-closed", lock_open: "lock-open",
+  email: "mail", phone: "call", chat: "chatbubble", message: "chatbox",
+  share: "share", download: "download", upload: "cloud-upload",
+  play_arrow: "play", pause: "pause", stop: "stop", skip_next: "play-skip-forward", skip_previous: "play-skip-back",
+  volume_up: "volume-high", volume_off: "volume-mute",
+  camera_alt: "camera", photo: "image", videocam: "videocam",
+  attach_file: "attach", link: "link", refresh: "refresh",
+  warning: "warning", info: "information-circle", help: "help-circle",
+};
+
 // ─── HTTP fetch helper (server-side, NOT in sandbox) ──────────────────────────
 function httpFetch(url, maxBytes = 10_000_000, redirectsLeft = 3) {
   return new Promise((resolve, reject) => {
@@ -233,7 +258,16 @@ function buildFigmaProxy(bridge) {
       } catch { /* try next library */ }
     }
 
-    if (!svg) throw new Error(`Icon "${iconName}" not found in any library (tried: ${ICON_LIBRARIES.map(l => l.name).join(", ")})`);
+    if (!svg) {
+      // BUG-04: suggest Ionicons name when user passes Material/snake_case naming
+      const suggestion = MATERIAL_TO_IONICONS[iconName];
+      const hint = suggestion
+        ? ` Did you mean "${suggestion}"? (Material Icons names like "${iconName}" are not supported — use Ionicons names instead.)`
+        : iconName.includes("_")
+          ? ` Hint: snake_case names (e.g. "${iconName}") are typical of Material Icons — Ionicons uses kebab-case (e.g. "${iconName.replace(/_/g, "-")}"). See figma_docs { section: "icons" }.`
+          : "";
+      throw new Error(`Icon "${iconName}" not found in any library (tried: ${ICON_LIBRARIES.map(l => l.name).join(", ")}).${hint}`);
+    }
 
     return bridge.sendOperation("create", {
       type: "SVG",

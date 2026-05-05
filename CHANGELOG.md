@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.5.21] — 2026-05-05
+
+### Fixed — BUG-01/02/03/04 from field reports
+
+**BUG-01: `setupDesignTokens` with `textStyles` throws under documentAccess: dynamic-page** (`src/plugin/handlers-tokens.js`)
+- Removed sync `figma.getLocalTextStyles()` fallback — Figma rejects sync call under `documentAccess: dynamic-page`
+- Both `setupDesignTokens` and `applyTextStyle` now use `getLocalTextStylesAsync` exclusively
+- Fixes: `Cannot call with documentAccess: dynamic-page. Use figma.getLocalTextStylesAsync instead.`
+
+**BUG-02: VECTOR `fill` rejects gradient objects** (`src/plugin/handlers-write.js`)
+- `buildVector` now uses `buildFillArray` (same as FRAME/RECTANGLE) instead of `solidFill`
+- Gradient fills (`{ type: "LINEAR_GRADIENT", stops: [...] }`) now work on VECTOR nodes
+- Hex fills, alpha hex (`#RRGGBBAA`), and CSS color strings still work — no regression
+
+**BUG-03: `query()` 100-node hard cap + no `parentId` filter** (`src/plugin/handlers-write.js`)
+- Default cap raised 100 → 500 (configurable via `limit` param)
+- New `parentId` param scopes search to a subtree — `findAll` runs on the parent instead of the whole page
+- Throws clear error if `parentId` is invalid; gracefully returns `[]` if parent has no `findAll` method
+
+**BUG-04: Material Icons names produce no helpful error** (`server/code-executor.js`)
+- Added `MATERIAL_TO_IONICONS` mapping table (60+ common icons: `local_cafe`→`cafe`, `notifications`→`notifications`, etc.)
+- When user passes a Material name, error now suggests the Ionicons equivalent
+- For unknown `snake_case` names, error suggests kebab-case alternative
+- Full library scan still runs first — only the error message is improved
+
+### Tests
+- `scripts/test-v2521.mjs` — 16 new tests (BUG-02 ×5, BUG-03 ×4, BUG-04 ×4, regression ×3)
+- Full suite: **223 tests, 0 failures** (39+13+29+27+23+11+41+24+16)
+
+---
+
 ## [2.5.19] — 2026-04-19
 
 ### Fixed — BUG-13/16/17/18/19 from field reports

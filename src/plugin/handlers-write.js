@@ -34,18 +34,28 @@ handlers.createPage = async ({ name }) => {
   return { id: page.id, name: page.name };
 };
 
-handlers.query = async ({ type, name, id }) => {
+handlers.query = async (params) => {
+  var type = params.type, name = params.name, id = params.id;
+  var parentId = params.parentId, limit = params.limit || 500;
   if (id) {
     const n = await findNodeByIdAsync(id);
     return n ? [nodeToInfo(n)] : [];
   }
   if (!type && !name) throw new Error("query requires at least one of: type, name, id");
-  const results = figma.currentPage.findAll(n => {
+  // BUG-03: parentId filter scopes search to a subtree; default cap raised 100 → 500.
+  var scope = figma.currentPage;
+  if (parentId) {
+    var parent = await findNodeByIdAsync(parentId);
+    if (!parent) throw new Error("parentId not found: " + parentId);
+    if (typeof parent.findAll !== "function") return [];
+    scope = parent;
+  }
+  const results = scope.findAll(n => {
     if (type && name) return n.type === type && n.name === name;
     if (type) return n.type === type;
     return n.name === name;
   });
-  return results.slice(0, 100).map(nodeToInfo);
+  return results.slice(0, limit).map(nodeToInfo);
 };
 
 // ─── shared helpers ────────────────────────────────────────────────────────────
@@ -241,7 +251,8 @@ function buildVector(params, width, height, fill, stroke, strokeWeight) {
     // BUG-04: Figma resets bounding box to path geometry after setVectorPaths.
     // Re-apply resize() so the node matches the requested dimensions.
     if (width && height) node.resize(width, height);
-    node.fills = fill ? solidFill(fill, params.fillOpacity) : [];
+    // BUG-02: VECTOR fill now supports gradient objects (same as FRAME/RECTANGLE)
+    node.fills = fill ? buildFillArray(fill, params.fillOpacity) : [];
     if (stroke) { node.strokes = solidStroke(stroke); node.strokeWeight = strokeWeight; }
     if (params.strokeCap)  node.strokeCap  = params.strokeCap;
     if (params.strokeJoin) node.strokeJoin = params.strokeJoin;

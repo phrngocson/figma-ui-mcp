@@ -652,18 +652,11 @@ handlers.setupDesignTokens = async function(params) {
   var textStyleResults = [];
   var tsNames = Object.keys(textStyles);
   if (tsNames.length > 0) {
+    // BUG-01: only use async API. Sync getLocalTextStyles throws under documentAccess: dynamic-page
     var existingTextStyles = {};
-    try {
-      var allStyles = await figma.getLocalTextStylesAsync();
-      for (var as = 0; as < allStyles.length; as++) {
-        existingTextStyles[allStyles[as].name] = allStyles[as];
-      }
-    } catch (e) {}
-    if (Object.keys(existingTextStyles).length === 0 && figma.getLocalTextStyles) {
-      var syncStyles = figma.getLocalTextStyles();
-      for (var ss = 0; ss < syncStyles.length; ss++) {
-        existingTextStyles[syncStyles[ss].name] = syncStyles[ss];
-      }
+    var allStyles = await figma.getLocalTextStylesAsync();
+    for (var as = 0; as < allStyles.length; as++) {
+      existingTextStyles[allStyles[as].name] = allStyles[as];
     }
 
     for (var ts = 0; ts < tsNames.length; ts++) {
@@ -784,9 +777,8 @@ handlers.applyTextStyle = async function(params) {
 
   var resolvedStyleId = styleId;
   if (!resolvedStyleId) {
-    var styles = null;
-    try { styles = await figma.getLocalTextStylesAsync(); }
-    catch (e) { if (figma.getLocalTextStyles) styles = figma.getLocalTextStyles(); }
+    // BUG-01: only use async API
+    var styles = await figma.getLocalTextStylesAsync();
     if (!styles) throw new Error("Could not list text styles");
     for (var i = 0; i < styles.length; i++) {
       if (styles[i].name === styleName) { resolvedStyleId = styles[i].id; break; }
