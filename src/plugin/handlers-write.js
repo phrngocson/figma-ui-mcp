@@ -718,6 +718,51 @@ handlers.setComponentProperties = async function(params) {
 
   node.setProperties(resolvedMap);
 
+  // Promote any bound TEXT child's layoutSizing axis to HUG so a hug-width
+  // auto-layout parent actually reflows in response to the property change.
+  // Without this, setProperties updates `characters` but `layoutSizingHorizontal:
+  // FIXED` (Figma's default after parenting) overrides textAutoResize and
+  // pins the child width — the parent never sees a size change to react to.
+  //
+  // Targeted at TEXT-type properties only; BOOLEAN / INSTANCE_SWAP don't
+  // change child dimensions in a way the auto-layout needs help with.
+  //
+  // Inline rather than calling a shared helper because the layout-sizing
+  // exposure + auto-promote helper lives in a separate PR (feat/layout-
+  // sizing-axes) that may merge after this one. Once both land, this block
+  // can be replaced with a call to the shared autoPromoteTextHugForReflow.
+  if (typeof node.findAll === "function") {
+    var defs = (main && main.componentPropertyDefinitions) || {};
+    var changedKeys = Object.keys(resolvedMap);
+    for (var ck = 0; ck < changedKeys.length; ck++) {
+      var key = changedKeys[ck];
+      var def = defs[key];
+      if (!def || def.type !== "TEXT") continue;
+      var boundTexts = node.findAll(function(t) {
+        return t.type === "TEXT"
+          && t.componentPropertyReferences
+          && t.componentPropertyReferences.characters === key;
+      });
+      for (var bi = 0; bi < boundTexts.length; bi++) {
+        var textNode = boundTexts[bi];
+        var p = textNode.parent;
+        if (!p || !p.layoutMode || p.layoutMode === "NONE") continue;
+        var horizontal = p.layoutMode === "HORIZONTAL";
+        var parentHugs = p.primaryAxisSizingMode === "AUTO" ||
+          (horizontal ? p.layoutSizingHorizontal === "HUG"
+                      : p.layoutSizingVertical   === "HUG");
+        if (!parentHugs) continue;
+        try {
+          if (horizontal && "layoutSizingHorizontal" in textNode) {
+            textNode.layoutSizingHorizontal = "HUG";
+          } else if (!horizontal && "layoutSizingVertical" in textNode) {
+            textNode.layoutSizingVertical = "HUG";
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
   return {
     id: node.id,
     name: node.name,

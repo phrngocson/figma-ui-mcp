@@ -135,9 +135,16 @@ function makeMockMaster(name, defs = {}) {
 // actual runtime our users see. Sync `.mainComponent` access throws; only
 // getMainComponentAsync() is allowed. Pass mode: "legacy" to simulate older
 // Figma runtimes where the sync getter works.
+//
+// opts.children — optional array of TEXT mocks (see makeBoundTextChild) that
+//   live inside this instance. The instance is itself the auto-layout parent
+//   for those children, and findAll walks them. Used by the reflow tests.
+// opts.layoutMode + opts.primaryAxisSizingMode + opts.layoutSizing{H,V} — set
+//   the instance's own auto-layout config so children can reflow against it.
 function makeMockInstance(name, master, opts = {}) {
   const mode = opts.mode || "dynamic-page";
   const propValues = opts.propValues || {};
+  const children = opts.children || [];
   // Store master in a closure so we can simulate the dynamic-page-throws-on-sync
   // behavior even though tests still need to inspect what the handler "saw".
   let storedMaster = master;
@@ -146,6 +153,10 @@ function makeMockInstance(name, master, opts = {}) {
     name,
     type: "INSTANCE",
     componentProperties: { ...propValues },
+    layoutMode: opts.layoutMode || "NONE",
+    primaryAxisSizingMode: opts.primaryAxisSizingMode || "FIXED",
+    layoutSizingHorizontal: opts.layoutSizingHorizontal,
+    layoutSizingVertical:   opts.layoutSizingVertical,
     _lastSetProperties: null,
     _lastSwap: null,
     async getMainComponentAsync() { return storedMaster; },
@@ -154,13 +165,28 @@ function makeMockInstance(name, master, opts = {}) {
       const defs = (storedMaster && storedMaster.componentPropertyDefinitions) || {};
       Object.keys(props).forEach(k => {
         inst.componentProperties[k] = { type: defs[k] ? defs[k].type : "TEXT", value: props[k] };
+        // Apply to any bound TEXT child so the handler's findAll can find them
+        // via componentPropertyReferences.characters === k.
+        children.forEach(child => {
+          if (child.type === "TEXT"
+              && child.componentPropertyReferences
+              && child.componentPropertyReferences.characters === k) {
+            child.characters = String(props[k]);
+          }
+        });
       });
     },
     swapComponent(target) {
       this._lastSwap = target;
       storedMaster = target;
     },
+    findAll(predicate) {
+      return children.filter(c => predicate(c));
+    },
   };
+  // Parent-link every child so reflow checks (child.parent.layoutMode, etc.) work.
+  children.forEach(c => { c.parent = inst; });
+
   if (mode === "legacy") {
     inst.mainComponent = storedMaster;
   } else {
@@ -172,6 +198,47 @@ function makeMockInstance(name, master, opts = {}) {
     });
   }
   return inst;
+}
+
+// Bound TEXT child mock. Tracks layoutSizing writes via setters so tests can
+// inspect what the handler did. Defaults match what Figma actually sets after
+// parenting a text into an auto-layout frame: layoutSizingHorizontal=FIXED.
+function makeBoundTextChild(name, propertyName, opts = {}) {
+  const state = {
+    _layoutSizingHorizontal: opts.layoutSizingHorizontal || "FIXED",
+    _layoutSizingVertical:   opts.layoutSizingVertical   || "FIXED",
+    _attempts: { layoutSizingHorizontal: [], layoutSizingVertical: [] },
+  };
+  const text = {
+    id: "text:" + name,
+    name,
+    type: "TEXT",
+    characters: opts.characters || "x",
+    componentPropertyReferences: { characters: propertyName },
+    parent: null,
+  };
+  Object.defineProperty(text, "layoutSizingHorizontal", {
+    get() { return state._layoutSizingHorizontal; },
+    set(v) {
+      state._attempts.layoutSizingHorizontal.push(v);
+      if (!text.parent || !text.parent.layoutMode || text.parent.layoutMode === "NONE") {
+        throw new Error("layoutSizingHorizontal requires auto-layout parent");
+      }
+      state._layoutSizingHorizontal = v;
+    },
+  });
+  Object.defineProperty(text, "layoutSizingVertical", {
+    get() { return state._layoutSizingVertical; },
+    set(v) {
+      state._attempts.layoutSizingVertical.push(v);
+      if (!text.parent || !text.parent.layoutMode || text.parent.layoutMode === "NONE") {
+        throw new Error("layoutSizingVertical requires auto-layout parent");
+      }
+      state._layoutSizingVertical = v;
+    },
+  });
+  text._attempts = state._attempts;
+  return text;
 }
 
 // ─── setComponentProperties ───────────────────────────────────────────────────
@@ -252,6 +319,96 @@ console.log("\nLayer B: setComponentProperties — legacy runtime (sync .mainCom
 
   await handlers.setComponentProperties({ id: inst.id, properties: { label: "Legacy OK" } });
   assert("legacy sync mainComponent fallback works", inst._lastSetProperties["label#1:0"] === "Legacy OK");
+}
+
+// ─── Reflow: setComponentProperties promotes bound text layoutSizing ─────────
+
+console.log("\nLayer B: setComponentProperties — promotes bound TEXT child to HUG (hug-width HORIZONTAL parent)");
+{
+  const master = makeMockMaster("ReflowBtn", { "label#5:0": { type: "TEXT", defaultValue: "Click" } });
+  const labelText = makeBoundTextChild("label-1", "label#5:0", { layoutSizingHorizontal: "FIXED" });
+  const inst = makeMockInstance("reflow-1", master, {
+    layoutMode: "HORIZONTAL",
+    primaryAxisSizingMode: "AUTO",
+    children: [labelText],
+  });
+  ctx.__mockNodes.set(inst.id, inst);
+
+  await handlers.setComponentProperties({
+    id: inst.id,
+    properties: { label: "Save changes to your booking" },
+  });
+  assert("text content updated via property", labelText.characters === "Save changes to your booking");
+  assert("bound text promoted to HUG horizontally", labelText.layoutSizingHorizontal === "HUG",
+    "got " + labelText.layoutSizingHorizontal);
+  assert("did NOT touch vertical axis", labelText.layoutSizingVertical === "FIXED");
+}
+
+console.log("\nLayer B: setComponentProperties — vertical hug parent → bound text HUG vertically");
+{
+  const master = makeMockMaster("Stack", { "title#1:0": { type: "TEXT", defaultValue: "x" } });
+  const titleText = makeBoundTextChild("title-1", "title#1:0");
+  const inst = makeMockInstance("stack-1", master, {
+    layoutMode: "VERTICAL",
+    primaryAxisSizingMode: "AUTO",
+    children: [titleText],
+  });
+  ctx.__mockNodes.set(inst.id, inst);
+
+  await handlers.setComponentProperties({ id: inst.id, properties: { title: "Longer copy" } });
+  assert("bound text promoted on vertical axis", titleText.layoutSizingVertical === "HUG");
+  assert("horizontal axis untouched for vertical parent", titleText.layoutSizingHorizontal === "FIXED");
+}
+
+console.log("\nLayer B: setComponentProperties — non-hug parent → no reflow promotion");
+{
+  const master = makeMockMaster("FixedBtn", { "label#1:0": { type: "TEXT", defaultValue: "x" } });
+  const labelText = makeBoundTextChild("label-fixed", "label#1:0", { layoutSizingHorizontal: "FIXED" });
+  const inst = makeMockInstance("fixed-1", master, {
+    layoutMode: "HORIZONTAL",
+    primaryAxisSizingMode: "FIXED",  // explicitly NOT hugging
+    children: [labelText],
+  });
+  ctx.__mockNodes.set(inst.id, inst);
+
+  await handlers.setComponentProperties({ id: inst.id, properties: { label: "Longer text" } });
+  assert("text content still updated", labelText.characters === "Longer text");
+  assert("layoutSizingHorizontal untouched for FIXED parent", labelText.layoutSizingHorizontal === "FIXED");
+}
+
+console.log("\nLayer B: setComponentProperties — BOOLEAN property doesn't trigger TEXT reflow lookup");
+{
+  const master = makeMockMaster("ToggleBtn", {
+    "expanded#1:0": { type: "BOOLEAN", defaultValue: false },
+  });
+  // No bound text children — if the handler tried to findAll despite BOOLEAN type
+  // it'd still return [] here, but we also want to assert the findAll guard.
+  const inst = makeMockInstance("toggle-1", master, {
+    layoutMode: "HORIZONTAL",
+    primaryAxisSizingMode: "AUTO",
+    children: [],
+  });
+  let findAllCalls = 0;
+  const origFindAll = inst.findAll;
+  inst.findAll = (pred) => { findAllCalls++; return origFindAll.call(inst, pred); };
+  ctx.__mockNodes.set(inst.id, inst);
+
+  await handlers.setComponentProperties({ id: inst.id, properties: { expanded: true } });
+  assert("BOOLEAN property applied", inst._lastSetProperties["expanded#1:0"] === true);
+  assert("findAll NOT called for non-TEXT property", findAllCalls === 0,
+    "got " + findAllCalls + " call(s)");
+}
+
+console.log("\nLayer B: setComponentProperties — instance without findAll (e.g. older Figma) is no-op-safe");
+{
+  const master = makeMockMaster("OldBtn", { "label#1:0": { type: "TEXT", defaultValue: "x" } });
+  const inst = makeMockInstance("old-1", master);  // no children, no findAll override needed
+  delete inst.findAll;  // simulate older runtime without findAll on instances
+  ctx.__mockNodes.set(inst.id, inst);
+
+  // Should not throw despite the missing findAll method.
+  await handlers.setComponentProperties({ id: inst.id, properties: { label: "OK" } });
+  assert("handler completed without throw", inst._lastSetProperties["label#1:0"] === "OK");
 }
 
 console.log("\nLayer B: setComponentProperties — validation");
