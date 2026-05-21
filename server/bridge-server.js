@@ -4,14 +4,14 @@ import http from "node:http";
 
 export const CONFIG = {
   PORT: parseInt(process.env.FIGMA_MCP_PORT || "38451", 10),
-  PORT_RANGE: 10,
+  PORT_RANGE: parseInt(process.env.FIGMA_MCP_PORT_RANGE || "10", 10),
   HOST: null,
   OP_TIMEOUT_MS: 60_000,
   MAX_BODY_BYTES: 5_000_000,
   MAX_QUEUE: 50,
-  HEALTH_TTL_MS: 60_000,
+  HEALTH_TTL_MS: 86400000,
   LONG_POLL_MS: 8_000,       // short for Figma iframe compat (some envs limit fetch ~10s)
-  SESSION_EXPIRE_MS: 300_000, // remove idle sessions after 5 min
+  SESSION_EXPIRE_MS: 86400000, // remove idle sessions after 5 min
 };
 
 // Operation-specific timeouts
@@ -50,14 +50,14 @@ export class BridgeServer {
   get port() { return this.#actualPort; }
 
   get lastPollAt() {
-    var latest = 0;
-    for (var s of this.#sessions.values()) if (s.lastPollAt > latest) latest = s.lastPollAt;
+    let latest = 0;
+    for (let s of this.#sessions.values()) if (s.lastPollAt > latest) latest = s.lastPollAt;
     return latest;
   }
 
   get queueLength() {
-    var n = 0;
-    for (var s of this.#sessions.values()) n += s.queue.length;
+    let n = 0;
+    for (let s of this.#sessions.values()) n += s.queue.length;
     return n;
   }
 
@@ -70,8 +70,8 @@ export class BridgeServer {
   // ── Session management ────────────────────────────────────────────────────
 
   #getSession(id) {
-    var sid = id || BridgeServer.DEFAULT_SESSION;
-    var s = this.#sessions.get(sid);
+    let sid = id || BridgeServer.DEFAULT_SESSION;
+    let s = this.#sessions.get(sid);
     if (!s) { s = new Session(sid); this.#sessions.set(sid, s); }
     return s;
   }
@@ -80,13 +80,13 @@ export class BridgeServer {
   // then most recently polled connected session, finally default
   #resolveSession(sessionId) {
     if (sessionId) {
-      var s = this.#sessions.get(sessionId);
+      let s = this.#sessions.get(sessionId);
       if (s && s.isConnected()) return s;
     }
     // Prefer session with active long-poll waiter (ready to receive work NOW)
-    var bestLongPoll = null;
-    var bestConnected = null;
-    for (var s of this.#sessions.values()) {
+    let bestLongPoll = null;
+    let bestConnected = null;
+    for (let s of this.#sessions.values()) {
       if (s.longPoll && s.isConnected()) {
         if (!bestLongPoll || s.lastPollAt > bestLongPoll.lastPollAt) bestLongPoll = s;
       }
@@ -100,8 +100,8 @@ export class BridgeServer {
   }
 
   getSessions() {
-    var list = [];
-    for (var s of this.#sessions.values()) {
+    let list = [];
+    for (let s of this.#sessions.values()) {
       list.push({
         id: s.id, fileName: s.fileName, connected: s.isConnected(),
         lastPollAgoMs: s.lastPollAt ? Date.now() - s.lastPollAt : null,
@@ -113,17 +113,17 @@ export class BridgeServer {
 
   isPluginConnected(sessionId) {
     if (sessionId) {
-      var s = this.#sessions.get(sessionId);
+      let s = this.#sessions.get(sessionId);
       return s ? s.isConnected() : false;
     }
-    for (var s of this.#sessions.values()) if (s.isConnected()) return true;
+    for (let s of this.#sessions.values()) if (s.isConnected()) return true;
     return false;
   }
 
   // Remove expired sessions periodically
   #cleanupSessions() {
-    var now = Date.now();
-    for (var [id, s] of this.#sessions) {
+    let now = Date.now();
+    for (let [id, s] of this.#sessions) {
       if (!s.isConnected() && s.queue.length === 0 && s.pending.size === 0 && now - s.lastPollAt > CONFIG.SESSION_EXPIRE_MS) {
         this.#sessions.delete(id);
       }
@@ -133,18 +133,18 @@ export class BridgeServer {
   // ── Core operations ───────────────────────────────────────────────────────
 
   async sendOperation(operation, params, sessionId) {
-    var session = this.#resolveSession(sessionId);
+    let session = this.#resolveSession(sessionId);
     if (session.queue.length >= CONFIG.MAX_QUEUE) {
       throw new Error("Queue full — is the Figma plugin running?");
     }
 
-    var timeout = OP_TIMEOUTS[operation] || CONFIG.OP_TIMEOUT_MS;
-    var opId = Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+    let timeout = OP_TIMEOUTS[operation] || CONFIG.OP_TIMEOUT_MS;
+    let opId = Date.now() + "-" + Math.random().toString(36).slice(2, 7);
 
     // CRITICAL: set pending BEFORE queue+flush, so respondPoll filter sees the opId
-    var self = this;
+    let self = this;
     return new Promise(function(resolve, reject) {
-      var timer = setTimeout(function() {
+      let timer = setTimeout(function() {
         session.pending.delete(opId);
         session.queue = session.queue.filter(function(r) { return r.id !== opId; });
         reject(new Error("Operation \"" + operation + "\" timed out after " + timeout + "ms"));
@@ -160,7 +160,7 @@ export class BridgeServer {
 
   #flushLongPoll(session) {
     if (!session.longPoll) return;
-    var w = session.longPoll;
+    let w = session.longPoll;
     session.longPoll = null;
     clearTimeout(w.timer);
     this.#respondPoll(session, w.res);
@@ -168,7 +168,7 @@ export class BridgeServer {
 
   #respondPoll(session, res) {
     session.lastPollAt = Date.now();
-    var alive = session.queue.filter(function(r) { return session.pending.has(r.id); });
+    let alive = session.queue.filter(function(r) { return session.pending.has(r.id); });
     session.queue.length = 0;
     if (alive.length) process.stderr.write("[bridge] poll → session=" + session.id + " delivering " + alive.length + " ops: " + alive.map(function(r) { return r.operation; }).join(",") + "\n");
     res.writeHead(200);
@@ -176,24 +176,24 @@ export class BridgeServer {
   }
 
   #settle(response) {
-    var sessionId = this.#opToSession.get(response.id);
+    let sessionId = this.#opToSession.get(response.id);
     if (!sessionId) {
       process.stderr.write("[bridge] settle ORPHAN response id=" + response.id + " (no matching session)\n");
       return;
     }
     this.#opToSession.delete(response.id);
 
-    var session = this.#sessions.get(sessionId);
+    let session = this.#sessions.get(sessionId);
     if (!session) return;
 
-    var p = session.pending.get(response.id);
+    let p = session.pending.get(response.id);
     if (!p) return;
     clearTimeout(p.timer);
     session.pending.delete(response.id);
 
     // Track latency
     if (p.startMs) {
-      var latency = Date.now() - p.startMs;
+      let latency = Date.now() - p.startMs;
       session.stats.ops++;
       session.stats.avgLatencyMs = Math.round(session.stats.avgLatencyMs * 0.9 + latency * 0.1);
       this.#globalStats.ops++;
@@ -203,11 +203,11 @@ export class BridgeServer {
   }
 
   clearQueue(sessionId) {
-    var cleared = 0;
-    var sessions = sessionId ? [this.#sessions.get(sessionId)].filter(Boolean) : Array.from(this.#sessions.values());
-    for (var s of sessions) {
+    let cleared = 0;
+    let sessions = sessionId ? [this.#sessions.get(sessionId)].filter(Boolean) : Array.from(this.#sessions.values());
+    for (let s of sessions) {
       cleared += s.queue.length + s.pending.size;
-      for (var [id, p] of s.pending) {
+      for (let [id, p] of s.pending) {
         clearTimeout(p.timer);
         p.reject(new Error("Queue cleared manually"));
         this.#opToSession.delete(id);
@@ -222,7 +222,7 @@ export class BridgeServer {
 
   #readJson(req) {
     return new Promise(function(resolve, reject) {
-      var raw = "", size = 0;
+      let raw = "", size = 0;
       req.on("data", function(chunk) {
         size += chunk.length;
         if (size > CONFIG.MAX_BODY_BYTES) { req.destroy(); return reject(new Error("Body too large")); }
@@ -245,11 +245,11 @@ export class BridgeServer {
     this.#headers(res);
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-    var url = new URL(req.url, "http://localhost:" + CONFIG.PORT);
-    var path = url.pathname;
+    let url = new URL(req.url, "http://localhost:" + CONFIG.PORT);
+    let path = url.pathname;
     // Session ID from query param or header (backward compat: absent = default)
-    var sessionId = url.searchParams.get("sessionId") || req.headers["x-session-id"] || null;
-    var fileName = url.searchParams.get("fileName") || null;
+    let sessionId = url.searchParams.get("sessionId") || req.headers["x-session-id"] || null;
+    let fileName = url.searchParams.get("fileName") || null;
 
     // Root
     if (path === "/" && req.method === "GET") {
@@ -273,7 +273,7 @@ export class BridgeServer {
 
     // Plugin poll (long polling, session-aware)
     if (path === "/poll" && req.method === "GET") {
-      var session = this.#getSession(sessionId);
+      let session = this.#getSession(sessionId);
       if (fileName) session.fileName = fileName;
       session.lastPollAt = Date.now();
 
@@ -287,7 +287,7 @@ export class BridgeServer {
         clearTimeout(session.longPoll.timer);
         this.#respondPoll(session, session.longPoll.res);
       }
-      var self = this;
+      let self = this;
       session.longPoll = {
         res: res,
         timer: setTimeout(function() {
@@ -306,7 +306,7 @@ export class BridgeServer {
 
     // Plugin response
     if (path === "/response" && req.method === "POST") {
-      var self = this;
+      let self = this;
       this.#readJson(req)
         .then(function(body) { self.#settle(body); res.writeHead(200); res.end(JSON.stringify({ ok: true })); })
         .catch(function(err) { res.writeHead(400); res.end(JSON.stringify({ error: err.message })); });
@@ -315,14 +315,14 @@ export class BridgeServer {
 
     // Direct exec
     if (path === "/exec" && req.method === "POST") {
-      var self = this;
+      let self = this;
       this.#readJson(req)
         .then(async function(body) {
           if (!self.isPluginConnected(sessionId)) {
             res.writeHead(503); res.end(JSON.stringify({ error: "Plugin not connected" })); return;
           }
           try {
-            var data = await self.sendOperation(body.operation, body.params || {}, sessionId);
+            let data = await self.sendOperation(body.operation, body.params || {}, sessionId);
             res.writeHead(200); res.end(JSON.stringify({ success: true, data: data }));
           } catch (e) {
             res.writeHead(200); res.end(JSON.stringify({ success: false, error: e.message }));
@@ -335,7 +335,7 @@ export class BridgeServer {
     // Health
     if (path === "/health" && req.method === "GET") {
       this.#cleanupSessions();
-      var lp = this.lastPollAt;
+      let lp = this.lastPollAt;
       res.writeHead(200);
       res.end(JSON.stringify({
         pluginConnected: this.isPluginConnected(),
@@ -350,7 +350,7 @@ export class BridgeServer {
 
     // Clear queue
     if (path === "/clear" && (req.method === "POST" || req.method === "GET")) {
-      var cleared = this.clearQueue(sessionId);
+      let cleared = this.clearQueue(sessionId);
       res.writeHead(200);
       res.end(JSON.stringify({ cleared: cleared, queueLength: 0, pendingCount: 0 }));
       return;
@@ -363,14 +363,14 @@ export class BridgeServer {
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   async #killStaleBridges() {
-    var port = CONFIG.PORT;
+    let port = CONFIG.PORT;
     try {
-      var isZombie = await new Promise(function(resolve) {
-        var req = http.get({ hostname: "127.0.0.1", port: port, path: "/health", timeout: 800 }, function(res) {
-          var data = "";
+      let isZombie = await new Promise(function(resolve) {
+        let req = http.get({ hostname: "127.0.0.1", port: port, path: "/health", timeout: 800 }, function(res) {
+          let data = "";
           res.on("data", function(c) { data += c; });
           res.on("end", function() {
-            try { var j = JSON.parse(data); resolve(j.pluginConnected === undefined); }
+            try { let j = JSON.parse(data); resolve(j.pluginConnected === undefined); }
             catch(e) { resolve(true); }
           });
         });
@@ -379,8 +379,8 @@ export class BridgeServer {
       });
       if (isZombie) {
         try {
-          var m = await import("node:child_process");
-          var pid = m.execSync("lsof -ti tcp:" + port + " 2>/dev/null", { encoding: "utf8" }).trim();
+          let m = await import("node:child_process");
+          let pid = m.execSync("lsof -ti tcp:" + port + " 2>/dev/null", { encoding: "utf8" }).trim();
           if (pid) {
             m.execSync("kill " + pid + " 2>/dev/null");
             process.stderr.write("[figma-ui-mcp] Killed zombie on port " + port + " (PID " + pid + ")\n");
@@ -392,11 +392,11 @@ export class BridgeServer {
   }
 
   start() {
-    var self = this;
+    let self = this;
     return new Promise(async function(resolve) {
       await self.#killStaleBridges();
 
-      var tryPort = function(port, attempt) {
+      let tryPort = function(port, attempt) {
         if (attempt >= CONFIG.PORT_RANGE) {
           process.stderr.write("[figma-ui-mcp] All ports " + CONFIG.PORT + "-" + (CONFIG.PORT + CONFIG.PORT_RANGE - 1) + " in use.\n");
           resolve(self);
@@ -424,10 +424,10 @@ export class BridgeServer {
 
   stop() {
     if (this.#server) { this.#server.close(); this.#server = null; }
-    for (var [id, sid] of this.#opToSession) {
-      var s = this.#sessions.get(sid);
+    for (let [id, sid] of this.#opToSession) {
+      let s = this.#sessions.get(sid);
       if (s) {
-        var p = s.pending.get(id);
+        let p = s.pending.get(id);
         if (p) { clearTimeout(p.timer); p.reject(new Error("Bridge shutting down")); }
       }
     }

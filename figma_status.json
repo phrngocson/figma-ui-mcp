@@ -1,0 +1,1 @@
+{"name":"figma_status","description":"Check whether the Figma plugin bridge is connected. Always call this first to confirm the plugin is running before any other tool.","parameters":{"properties":{},"required":[],"type":"object"}}
